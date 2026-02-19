@@ -141,7 +141,20 @@ export function useBrainState(
         }
       }
 
-      if (validChannels === 0) return;
+      // Calibration timer (must run even with no valid data)
+      const elapsed = (now - t0.current) / 1000;
+      const calibrating = elapsed < CAL_SECONDS;
+
+      if (validChannels === 0) {
+        setState((s) => ({
+          ...s,
+          blinks: blinks.current,
+          clenches: clenches.current,
+          calibrating,
+          calibrationProgress: Math.min(1, elapsed / CAL_SECONDS),
+        }));
+        return;
+      }
 
       for (const k of Object.keys(raw) as (keyof typeof raw)[]) {
         raw[k] /= validChannels;
@@ -165,10 +178,6 @@ export function useBrainState(
 
       // Focus = beta/alpha on frontal channels
       const focusRatio = sb.alpha > 0 ? sb.beta / sb.alpha : 0;
-
-      // Calibration
-      const elapsed = (now - t0.current) / 1000;
-      const calibrating = elapsed < CAL_SECONDS;
 
       if (calibrating) {
         focusRatios.current.push(focusRatio);

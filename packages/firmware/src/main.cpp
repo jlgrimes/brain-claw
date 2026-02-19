@@ -9,9 +9,20 @@
 
 static WebSocketsClient ws;
 static NimBLEClient* bleClient = nullptr;
-static bool wsConnected = false;
-static bool bleConnected = false;
+static volatile bool wsConnected = false;
+static volatile bool bleConnected = false;
 static bool museStreaming = false;
+
+// ── Thread-safe message queue (BLE task → main loop) ─────────────────────────
+// BLE notification callbacks run on the NimBLE FreeRTOS task, but the WebSockets
+// library is not thread-safe.  Queue JSON here and drain from loop().
+
+struct WsMsg {
+    char json[320];
+};
+
+static QueueHandle_t wsQueue = nullptr;
+static const int WS_QUEUE_SIZE = 64;
 
 // Channel index lookup for EEG characteristic UUIDs
 static const char* eegUUIDs[] = {
@@ -35,9 +46,9 @@ static void onEegNotify(NimBLERemoteCharacteristic* pChar, uint8_t* data, size_t
 
     // Determine channel index from UUID
     int ch = -1;
-    const char* uuid = pChar->getUUID().toString().c_str();
+    std::string uuidStr = pChar->getUUID().toString();
     for (int i = 0; i < 4; i++) {
-        if (strcmp(uuid, eegUUIDs[i]) == 0) { ch = i; break; }
+        if (uuidStr == eegUUIDs[i]) { ch = i; break; }
     }
     if (ch < 0) return;
 
@@ -119,10 +130,13 @@ void wsEvent(WStype_t type, uint8_t* payload, size_t length) {
     }
 }
 
+// Enqueue JSON from any task context (safe to call from BLE callbacks)
 void sendJSON(const char* json) {
-    if (wsConnected) {
-        ws.sendTXT(json);
-    }
+    if (!wsConnected || !wsQueue) return;
+    WsMsg msg;
+    strncpy(msg.json, json, sizeof(msg.json) - 1);
+    msg.json[sizeof(msg.json) - 1] = '\0';
+    xQueueSend(wsQueue, &msg, 0); // drop if full — better than blocking BLE task
 }
 
 // ── WiFi ───────────────────────────────────────────────────────────────────────
@@ -254,6 +268,8 @@ void setup() {
     delay(1000);
     Serial.println("\n=== Brain Claw - Muse 2 Bridge ===");
 
+    wsQueue = xQueueCreate(WS_QUEUE_SIZE, sizeof(WsMsg));
+
     // Init BLE
     NimBLEDevice::init("BrainClaw");
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
@@ -280,6 +296,14 @@ void setup() {
 
 void loop() {
     ws.loop();
+
+    // Drain queued messages from BLE callbacks (runs on main task → thread-safe)
+    WsMsg msg;
+    while (xQueueReceive(wsQueue, &msg, 0) == pdTRUE) {
+        if (wsConnected) {
+            ws.sendTXT(msg.json);
+        }
+    }
 
     // Reconnect BLE if disconnected
     if (!bleConnected) {
