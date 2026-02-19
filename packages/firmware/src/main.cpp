@@ -144,8 +144,8 @@ class ClientCallbacks : public NimBLEClientCallbacks {
         Serial.println("[BLE] Connected to Muse");
         bleConnected = true;
     }
-    void onDisconnect(NimBLEClient* client, int reason) override {
-        Serial.printf("[BLE] Disconnected (reason=%d)\n", reason);
+    void onDisconnect(NimBLEClient* client) override {
+        Serial.println("[BLE] Disconnected");
         bleConnected = false;
         museStreaming = false;
     }
@@ -242,7 +242,7 @@ bool connectMuse() {
     delete museDevice;
 
     // Request higher MTU for 20-byte EEG packets
-    bleClient->setMTU(185);
+    NimBLEDevice::setMTU(185);
 
     return true;
 }
