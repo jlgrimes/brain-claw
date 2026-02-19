@@ -1,0 +1,7 @@
+{
+  "name": "brain-claw",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ]
+}

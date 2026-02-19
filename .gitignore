@@ -1,0 +1,12 @@
+node_modules
+dist
+.pio
+.vscode
+.venv
+__pycache__
+*.o
+*.elf
+*.bin
+*.map
+.DS_Store
+package-lock.json
