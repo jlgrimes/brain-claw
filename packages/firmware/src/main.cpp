@@ -204,7 +204,11 @@ void startMuseStream() {
         return;
     }
 
-    // Subscribe to data characteristics first
+    // muse-js subscribes to control characteristic first — Muse requires this
+    // before it will process commands
+    subscribeChar(svc, MUSE_CONTROL_UUID, [](NimBLERemoteCharacteristic*, uint8_t*, size_t, bool) {});
+
+    // Subscribe to data characteristics
     for (int i = 0; i < 4; i++) {
         subscribeChar(svc, eegUUIDs[i], onEegNotify);
     }
@@ -212,10 +216,11 @@ void startMuseStream() {
     subscribeChar(svc, MUSE_GYRO_UUID, onGyroNotify);
     subscribeChar(svc, MUSE_TELEMETRY_UUID, onTelemetryNotify);
 
-    // Send Muse start sequence: halt, preset, start
+    // Send Muse start sequence (matches muse-js): halt, preset, start, resume
     sendMuseCommand(ctrl, "h");
     sendMuseCommand(ctrl, "p21");
     sendMuseCommand(ctrl, "s");
+    sendMuseCommand(ctrl, "d");
 
     museStreaming = true;
     Serial.println("[Muse] Streaming started");
