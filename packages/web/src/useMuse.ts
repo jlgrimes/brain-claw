@@ -20,7 +20,7 @@ export interface MuseState {
   mode: 'ble' | 'ws' | null;
 }
 
-const DEFAULT_WS_URL = `ws://${window.location.hostname}:8765/?role=consumer`;
+const DEFAULT_WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/?role=consumer`;
 
 export function useMuse() {
   const [state, setState] = useState<MuseState>({
