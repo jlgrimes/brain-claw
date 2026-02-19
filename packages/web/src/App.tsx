@@ -204,8 +204,8 @@ function HeadTilt({ accel }: { accel: RefObject<XYZ> }) {
       const { x, y } = accel.current;
 
       // Rotate 90° CW to match Muse 2 orientation on forehead
-      const dx = Math.max(-1, Math.min(1, y)) * r * 0.7;
-      const dy = Math.max(-1, Math.min(1, -x)) * r * 0.7;
+      const dx = Math.max(-1, Math.min(1, -y)) * r * 0.7;
+      const dy = Math.max(-1, Math.min(1, x)) * r * 0.7;
 
       ctx.clearRect(0, 0, size, size);
 
