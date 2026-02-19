@@ -17,7 +17,10 @@ export interface MuseState {
   error: string | null;
   battery: number | null;
   temperature: number | null;
+  mode: 'ble' | 'ws' | null;
 }
+
+const DEFAULT_WS_URL = `ws://${window.location.hostname}:8765/?role=consumer`;
 
 export function useMuse() {
   const [state, setState] = useState<MuseState>({
@@ -25,18 +28,32 @@ export function useMuse() {
     error: null,
     battery: null,
     temperature: null,
+    mode: null,
   });
 
   const clientRef = useRef<MuseClient | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const buffersRef = useRef(CHANNEL_NAMES.map(() => new Float64Array(BUFFER_SIZE)));
   const writePosRef = useRef(new Uint32Array(4));
   const totalSamplesRef = useRef(0);
   const accelRef = useRef<XYZ>({ x: 0, y: 0, z: 0 });
   const gyroRef = useRef<XYZ>({ x: 0, y: 0, z: 0 });
 
-  const connect = useCallback(async () => {
+  // Shared EEG sample writer
+  const pushEeg = (ch: number, samples: number[]) => {
+    if (ch >= 4) return;
+    const buf = buffersRef.current[ch];
+    for (const sample of samples) {
+      buf[writePosRef.current[ch] % BUFFER_SIZE] = sample;
+      writePosRef.current[ch]++;
+      totalSamplesRef.current++;
+    }
+  };
+
+  // --- BLE connect (direct to Muse via Web Bluetooth) ---
+  const connectBLE = useCallback(async () => {
     try {
-      setState({ status: 'pairing', error: null, battery: null, temperature: null });
+      setState({ status: 'pairing', error: null, battery: null, temperature: null, mode: 'ble' });
 
       const client = new MuseClient();
       clientRef.current = client;
@@ -44,56 +61,74 @@ export function useMuse() {
       await client.connect();
       await client.start();
 
-      // EEG
-      client.eegReadings.subscribe((reading) => {
-        const ch = reading.electrode;
-        if (ch >= 4) return;
-        const buf = buffersRef.current[ch];
-        for (const sample of reading.samples) {
-          buf[writePosRef.current[ch] % BUFFER_SIZE] = sample;
-          writePosRef.current[ch]++;
-          totalSamplesRef.current++;
-        }
+      client.eegReadings.subscribe((r) => pushEeg(r.electrode, r.samples));
+      client.accelerometerData.subscribe((d) => {
+        accelRef.current = d.samples[d.samples.length - 1];
       });
-
-      // Accelerometer
-      client.accelerometerData.subscribe((data) => {
-        const s = data.samples[data.samples.length - 1];
-        accelRef.current = s;
+      client.gyroscopeData.subscribe((d) => {
+        gyroRef.current = d.samples[d.samples.length - 1];
       });
-
-      // Gyroscope
-      client.gyroscopeData.subscribe((data) => {
-        const s = data.samples[data.samples.length - 1];
-        gyroRef.current = s;
-      });
-
-      // Telemetry
       client.telemetryData.subscribe((t) => {
-        setState((s) => ({
-          ...s,
-          battery: Math.round(t.batteryLevel),
-          temperature: t.temperature,
-        }));
+        setState((s) => ({ ...s, battery: Math.round(t.batteryLevel), temperature: t.temperature }));
       });
-
-      // Disconnect
       client.connectionStatus.subscribe((connected) => {
         if (!connected) {
-          setState({ status: 'idle', error: null, battery: null, temperature: null });
+          setState({ status: 'idle', error: null, battery: null, temperature: null, mode: null });
         }
       });
 
       setState((s) => ({ ...s, status: 'streaming' }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setState({ status: 'error', error: msg, battery: null, temperature: null });
+      setState({ status: 'error', error: msg, battery: null, temperature: null, mode: null });
     }
+  }, []);
+
+  // --- WebSocket connect (via ESP32 → server relay) ---
+  const connectWS = useCallback((url?: string) => {
+    const wsUrl = url ?? DEFAULT_WS_URL;
+    setState({ status: 'pairing', error: null, battery: null, temperature: null, mode: 'ws' });
+
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setState((s) => ({ ...s, status: 'streaming' }));
+    };
+
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        switch (msg.type) {
+          case 'eeg':
+            pushEeg(msg.ch, msg.samples);
+            break;
+          case 'accel':
+            accelRef.current = { x: msg.x, y: msg.y, z: msg.z };
+            break;
+          case 'gyro':
+            gyroRef.current = { x: msg.x, y: msg.y, z: msg.z };
+            break;
+          case 'telemetry':
+            setState((s) => ({ ...s, battery: Math.round(msg.battery), temperature: msg.temp }));
+            break;
+        }
+      } catch { /* ignore malformed */ }
+    };
+
+    ws.onclose = () => {
+      setState({ status: 'idle', error: null, battery: null, temperature: null, mode: null });
+    };
+
+    ws.onerror = () => {
+      setState({ status: 'error', error: 'WebSocket connection failed', battery: null, temperature: null, mode: null });
+    };
   }, []);
 
   return {
     ...state,
-    connect,
+    connectBLE,
+    connectWS,
     buffers: buffersRef.current,
     writePos: writePosRef.current,
     totalSamples: totalSamplesRef,

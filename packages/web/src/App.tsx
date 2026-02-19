@@ -24,27 +24,29 @@ export function App() {
   const streaming = muse.status === 'streaming';
 
   const hasBluetooth = typeof navigator !== 'undefined' && !!navigator.bluetooth;
-  if (!hasBluetooth) {
-    return (
-      <div style={s.noBt}>
-        <h2>Web Bluetooth not available</h2>
-        <p>Open this page in <strong>Google Chrome</strong>.</p>
-      </div>
-    );
-  }
+  const busy = muse.status === 'pairing' || streaming;
 
   return (
     <div style={s.root}>
       <header style={s.header}>
         <h1 style={s.title}>BRAIN CLAW</h1>
         <div style={s.controls}>
-          <ConnStatus status={muse.status} error={muse.error} />
+          <ConnStatus status={muse.status} error={muse.error} mode={muse.mode} />
+          {hasBluetooth && (
+            <button
+              onClick={muse.connectBLE}
+              disabled={busy}
+              style={{ ...s.btn, ...(busy ? s.btnOff : {}) }}
+            >
+              {streaming && muse.mode === 'ble' ? 'BLE Connected' : 'BLE Direct'}
+            </button>
+          )}
           <button
-            onClick={muse.connect}
-            disabled={muse.status === 'pairing' || streaming}
-            style={{ ...s.btn, ...(streaming || muse.status === 'pairing' ? s.btnOff : {}) }}
+            onClick={() => muse.connectWS()}
+            disabled={busy}
+            style={{ ...s.btn, ...s.btnWs, ...(busy ? s.btnOff : {}) }}
           >
-            {streaming ? 'Connected' : muse.status === 'pairing' ? 'Pairing...' : 'Connect Muse 2'}
+            {streaming && muse.mode === 'ws' ? 'WS Connected' : 'ESP32 Server'}
           </button>
         </div>
       </header>
@@ -100,11 +102,12 @@ export function App() {
 
 // ---- Sub-components ----
 
-function ConnStatus({ status, error }: { status: string; error: string | null }) {
+function ConnStatus({ status, error, mode }: { status: string; error: string | null; mode: string | null }) {
   const color = status === 'streaming' ? '#4ecdc4' : status === 'error' ? '#ff6b6b' : '#888';
+  const tag = mode ? ` [${mode.toUpperCase()}]` : '';
   const text =
-    status === 'streaming' ? 'Streaming' :
-    status === 'pairing' ? 'Pairing...' :
+    status === 'streaming' ? `Streaming${tag}` :
+    status === 'pairing' ? 'Connecting...' :
     status === 'error' ? `Error: ${error}` : 'Disconnected';
   return <span style={{ fontSize: 12, color }}>{text}</span>;
 }
@@ -346,6 +349,7 @@ const s: Record<string, CSSProperties> = {
     background: '#4ecdc4', color: '#0a0a1a', border: 'none', padding: '7px 18px',
     borderRadius: 4, fontFamily: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer',
   },
+  btnWs: { background: '#636efa' },
   btnOff: { background: '#333', color: '#666', cursor: 'default' },
   grid: { flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 },
   panel: {
